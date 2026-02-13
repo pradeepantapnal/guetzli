@@ -332,10 +332,18 @@ int main(int argc, char** argv) {
             static_cast<unsigned long long>(stats.butteraugli_compare_calls),
             stats.butteraugli_compare_total_ms, compare_avg_ms);
     fprintf(stderr,
-            "Instrumentation: SelectFrequencyMasking total_ms=%.3f candidate_evals=%llu\n",
+            "Instrumentation: SelectFrequencyMasking total_ms=%.3f "
+            "candidate_evals=%llu full_compare_calls=%llu top_k=%llu "
+            "fast_rejects=%llu\n",
             stats.select_frequency_masking_total_ms,
             static_cast<unsigned long long>(
-                stats.select_frequency_masking_candidate_evals));
+                stats.select_frequency_masking_candidate_evals),
+            static_cast<unsigned long long>(
+                stats.select_frequency_masking_full_compare_calls),
+            static_cast<unsigned long long>(
+                stats.select_frequency_masking_top_k),
+            static_cast<unsigned long long>(
+                stats.select_frequency_masking_fast_rejects));
   }
 
   return 0;
