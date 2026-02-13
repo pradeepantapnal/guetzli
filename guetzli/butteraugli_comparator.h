@@ -36,6 +36,7 @@ class ButteraugliComparator : public Comparator {
                         const float target_distance, ProcessStats* stats);
 
   void Compare(const OutputImage& img) override;
+  double ProxyDistance(const OutputImage& img) const override;
 
   void StartBlockComparisons() override;
   void FinishBlockComparisons() override;

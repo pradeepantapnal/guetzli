@@ -86,40 +86,82 @@ ButteraugliComparator::ButteraugliComparator(const int width, const int height,
 }
 
 void ButteraugliComparator::Compare(const OutputImage& img) {
-  const auto start = std::chrono::steady_clock::now();
+  const bool profiling =
+      (stats_ != nullptr && stats_->debug_output_file != nullptr);
+  const auto start = profiling
+      ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point();
 
-  const auto convert_start = std::chrono::steady_clock::now();
+  const auto convert_start = profiling
+      ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point();
   img.ToLinearRGB(&candidate_linear_rgb_);
   CopyPackedToPlanes(width_, height_, candidate_linear_rgb_, &candidate_planes_);
-  const auto convert_end = std::chrono::steady_clock::now();
+  const auto convert_end = profiling
+      ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point();
 
-  const auto diffmap_start = std::chrono::steady_clock::now();
+  const auto diffmap_start = profiling
+      ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point();
   comparator_.Diffmap(candidate_planes_, diffmap_image_);
   if (distmap_.size() != static_cast<size_t>(width_ * height_)) {
     distmap_.resize(width_ * height_);
   }
   CopyToPacked(diffmap_image_, &distmap_);
   distance_ = ::butteraugli::ButteraugliScoreFromDiffmap(diffmap_image_);
-  const auto diffmap_end = std::chrono::steady_clock::now();
+  const auto diffmap_end = profiling
+      ? std::chrono::steady_clock::now()
+      : std::chrono::steady_clock::time_point();
 
-  const double convert_ms = std::chrono::duration<double, std::milli>(
-      convert_end - convert_start).count();
-  const double diffmap_ms = std::chrono::duration<double, std::milli>(
-      diffmap_end - diffmap_start).count();
-  const double total_ms = std::chrono::duration<double, std::milli>(
-      std::chrono::steady_clock::now() - start).count();
+  double convert_ms = 0.0;
+  double diffmap_ms = 0.0;
+  double total_ms = 0.0;
+  if (profiling) {
+    convert_ms = std::chrono::duration<double, std::milli>(
+        convert_end - convert_start).count();
+    diffmap_ms = std::chrono::duration<double, std::milli>(
+        diffmap_end - diffmap_start).count();
+    total_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+  }
 
   if (stats_ != nullptr) {
     ++stats_->butteraugli_compare_calls;
-    stats_->butteraugli_compare_total_ms += total_ms;
+    if (profiling) {
+      stats_->butteraugli_compare_total_ms += total_ms;
+      stats_->butteraugli_color_convert_total_ms += convert_ms;
+      stats_->butteraugli_diffmap_total_ms += diffmap_ms;
+    }
   }
   GUETZLI_LOG(stats_, " BA[100.00%%] D[%6.4f]", distance_);
-  if (stats_ != nullptr && stats_->debug_output_file != nullptr) {
+  if (profiling) {
     GUETZLI_LOG(stats_,
                 " CompareTiming total_ms=%.3f convert_ms=%.3f diffmap_ms=%.3f ref_precompute_ms=%.3f ref_cached=%d\n",
                 total_ms, convert_ms, diffmap_ms,
                 reference_precompute_ms_, reference_precomputed_ ? 1 : 0);
   }
+}
+
+
+double ButteraugliComparator::ProxyDistance(const OutputImage& img) const {
+  const int step = 4;
+  std::vector<uint8_t> srgb = img.ToSRGB();
+  double acc = 0.0;
+  int count = 0;
+  for (int y = 0; y < height_; y += step) {
+    for (int x = 0; x < width_; x += step) {
+      const int px = y * width_ + x;
+      const int base = 3 * px;
+      const double dr = static_cast<double>(srgb[base + 0]) - rgb_orig_[base + 0];
+      const double dg = static_cast<double>(srgb[base + 1]) - rgb_orig_[base + 1];
+      const double db = static_cast<double>(srgb[base + 2]) - rgb_orig_[base + 2];
+      acc += 0.299 * dr * dr + 0.587 * dg * dg + 0.114 * db * db;
+      ++count;
+    }
+  }
+  if (count == 0) return 0.0;
+  return sqrt(acc / count) / 12.0;
 }
 
 namespace {

@@ -22,7 +22,9 @@
 #include <string>
 #include <sstream>
 #include <string.h>
+#include <thread>
 #include "png.h"
+#include "butteraugli/butteraugli.h"
 #include "guetzli/jpeg_data.h"
 #include "guetzli/jpeg_data_reader.h"
 #include "guetzli/processor.h"
@@ -223,7 +225,9 @@ void Usage() {
       "                 Default value is %d.\n"
       "  --memlimit M - Memory limit in MB. Guetzli will fail if unable to stay under\n"
       "                 the limit. Default limit is %d MB.\n"
-      "  --nomemlimit - Do not limit memory usage.\n", kDefaultJPEGQuality, kDefaultMemlimitMB);
+      "  --nomemlimit - Do not limit memory usage.\n"
+      "  --threads N  - Number of worker threads for Butteraugli hot loops.\n",
+      kDefaultJPEGQuality, kDefaultMemlimitMB);
   exit(1);
 }
 
@@ -235,6 +239,7 @@ int main(int argc, char** argv) {
   int verbose = 0;
   int quality = kDefaultJPEGQuality;
   int memlimit_mb = kDefaultMemlimitMB;
+  int threads = -1;
 
   int opt_idx = 1;
   for(;opt_idx < argc;opt_idx++) {
@@ -254,6 +259,11 @@ int main(int argc, char** argv) {
       memlimit_mb = atoi(argv[opt_idx]);
     } else if (!strcmp(argv[opt_idx], "--nomemlimit")) {
       memlimit_mb = -1;
+    } else if (!strcmp(argv[opt_idx], "--threads")) {
+      opt_idx++;
+      if (opt_idx >= argc)
+        Usage();
+      threads = atoi(argv[opt_idx]);
     } else if (!strcmp(argv[opt_idx], "--")) {
       opt_idx++;
       break;
@@ -266,6 +276,18 @@ int main(int argc, char** argv) {
   if (argc - opt_idx != 2) {
     Usage();
   }
+
+  const char* threads_env = getenv("GUETZLI_THREADS");
+  if (threads < 0 && threads_env != nullptr && threads_env[0] != '\0') {
+    threads = atoi(threads_env);
+  }
+  if (threads < 1) {
+    threads = static_cast<int>(std::thread::hardware_concurrency());
+    if (threads < 1) threads = 1;
+  }
+  threads = std::max(1, std::min(64, threads));
+  butteraugli::SetThreadCount(threads);
+  butteraugli::ResetRuntimeProfile();
 
   std::string in_data = ReadFileOrDie(argv[opt_idx]);
   std::string out_data;
@@ -324,26 +346,42 @@ int main(int argc, char** argv) {
   WriteFileOrDie(argv[opt_idx + 1], out_data);
 
   if (verbose) {
+    const auto butter_profile = butteraugli::GetRuntimeProfile();
+    stats.thread_count = butteraugli::ThreadCount();
     const double compare_avg_ms = stats.butteraugli_compare_calls == 0
         ? 0.0
         : stats.butteraugli_compare_total_ms / stats.butteraugli_compare_calls;
     fprintf(stderr,
-            "Instrumentation: Compare calls=%llu total_ms=%.3f avg_ms=%.3f\n",
+            "Instrumentation: Compare calls=%llu total_ms=%.3f avg_ms=%.3f color_ms=%.3f diffmap_ms=%.3f\n",
             static_cast<unsigned long long>(stats.butteraugli_compare_calls),
-            stats.butteraugli_compare_total_ms, compare_avg_ms);
+            stats.butteraugli_compare_total_ms, compare_avg_ms,
+            stats.butteraugli_color_convert_total_ms,
+            stats.butteraugli_diffmap_total_ms);
     fprintf(stderr,
             "Instrumentation: SelectFrequencyMasking total_ms=%.3f "
-            "candidate_evals=%llu full_compare_calls=%llu top_k=%llu "
+            "candidate_evals=%llu proxy_evals=%llu full_compare_calls=%llu proxy_rejects=%llu top_k=%llu "
             "fast_rejects=%llu\n",
             stats.select_frequency_masking_total_ms,
             static_cast<unsigned long long>(
                 stats.select_frequency_masking_candidate_evals),
             static_cast<unsigned long long>(
+                stats.select_frequency_masking_proxy_evals),
+            static_cast<unsigned long long>(
                 stats.select_frequency_masking_full_compare_calls),
+            static_cast<unsigned long long>(
+                stats.select_frequency_masking_proxy_rejects),
             static_cast<unsigned long long>(
                 stats.select_frequency_masking_top_k),
             static_cast<unsigned long long>(
                 stats.select_frequency_masking_fast_rejects));
+    fprintf(stderr,
+            "Instrumentation: butteraugli::Convolution calls=%llu total_ms=%.3f threads=%d\n",
+            static_cast<unsigned long long>(butter_profile.convolution_calls),
+            butter_profile.convolution_ms, stats.thread_count);
+    fprintf(stderr,
+            "Instrumentation: JPEG encode calls=%llu total_ms=%.3f\n",
+            static_cast<unsigned long long>(stats.jpeg_encode_calls),
+            stats.jpeg_encode_total_ms);
   }
 
   return 0;
