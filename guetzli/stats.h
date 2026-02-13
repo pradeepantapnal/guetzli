@@ -38,9 +38,13 @@ struct ProcessStats {
   FILE* debug_output_file = nullptr;
 
   uint64_t butteraugli_compare_calls = 0;
+  uint64_t butteraugli_tiled_compare_calls = 0;
   double butteraugli_compare_total_ms = 0.0;
   double butteraugli_color_convert_total_ms = 0.0;
   double butteraugli_diffmap_total_ms = 0.0;
+  uint64_t butteraugli_dirty_tiles = 0;
+  uint64_t butteraugli_tiles_recomputed = 0;
+  double butteraugli_tile_compare_total_ms = 0.0;
   double select_frequency_masking_total_ms = 0.0;
   uint64_t select_frequency_masking_candidate_evals = 0;
   uint64_t select_frequency_masking_proxy_evals = 0;
@@ -48,6 +52,7 @@ struct ProcessStats {
   uint64_t select_frequency_masking_proxy_rejects = 0;
   uint64_t select_frequency_masking_top_k = 0;
   uint64_t select_frequency_masking_fast_rejects = 0;
+  double select_frequency_masking_sort_total_ms = 0.0;
   uint64_t jpeg_encode_calls = 0;
   double jpeg_encode_total_ms = 0.0;
   int thread_count = 1;

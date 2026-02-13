@@ -27,6 +27,17 @@ sequential (nonprogressive) JPEGs due to faster decompression speeds they offer.
     *   On Alpine Linux, do `apk add libpng-dev`.
 3.  Run `make` and expect the binary to be created in `bin/Release/guetzli`.
 
+### Optional PGO/LTO build mode
+
+The GNU Make build supports optional profile-guided optimization and LTO:
+
+* `PROFILE=1 make` builds with profile generation (`-fprofile-generate`).
+* Run representative encodes to emit profile data (`*.gcda`).
+* `PROFILE=use make` rebuilds with profile use (`-fprofile-use -fprofile-correction`).
+* `LTO=1 make` enables link-time optimization (`-flto`).
+* You can combine both: `PROFILE=use LTO=1 make`.
+
+
 ## On Windows
 
 1.  Get a copy of the source code, either by cloning this repository, or by
