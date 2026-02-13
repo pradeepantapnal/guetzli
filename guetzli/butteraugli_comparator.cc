@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 
 #include "guetzli/debug_print.h"
 #include "guetzli/gamma_correct.h"
@@ -28,7 +29,6 @@ namespace guetzli {
 namespace {
 using ::butteraugli::ImageF;
 using ::butteraugli::CreatePlanes;
-using ::butteraugli::PlanesFromPacked;
 using ::butteraugli::PackedFromPlanes;
 
 std::vector<ImageF> LinearRgb(const size_t xsize, const size_t ysize,
@@ -47,6 +47,22 @@ std::vector<ImageF> LinearRgb(const size_t xsize, const size_t ysize,
   return planes;
 }
 
+void CopyPackedToPlanes(const size_t xsize, const size_t ysize,
+                        const std::vector<std::vector<float>>& packed,
+                        std::vector<ImageF>* planes) {
+  if (planes->size() != 3) {
+    *planes = CreatePlanes<float>(xsize, ysize, 3);
+  }
+  for (int c = 0; c < 3; ++c) {
+    for (size_t y = 0; y < ysize; ++y) {
+      const float* const BUTTERAUGLI_RESTRICT row_in =
+          &packed[c][xsize * y];
+      float* const BUTTERAUGLI_RESTRICT row_out = (*planes)[c].Row(y);
+      memcpy(row_out, row_in, xsize * sizeof(*row_out));
+    }
+  }
+}
+
 }  // namespace
 
 ButteraugliComparator::ButteraugliComparator(const int width, const int height,
@@ -58,28 +74,52 @@ ButteraugliComparator::ButteraugliComparator(const int width, const int height,
       target_distance_(target_distance),
       rgb_orig_(*rgb),
       comparator_(LinearRgb(width_, height_, *rgb)),
+      candidate_linear_rgb_(3, std::vector<float>(width_ * height_)),
       distance_(0.0),
-      stats_(stats) {}
+      stats_(stats) {
+  const auto start = std::chrono::steady_clock::now();
+  reference_opsin_ =
+      ::butteraugli::OpsinDynamicsImage(LinearRgb(width_, height_, rgb_orig_));
+  reference_precompute_ms_ = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - start).count();
+  reference_precomputed_ = true;
+}
 
 void ButteraugliComparator::Compare(const OutputImage& img) {
   const auto start = std::chrono::steady_clock::now();
-  std::vector<ImageF> rgb0 =
-      ::butteraugli::OpsinDynamicsImage(LinearRgb(width_, height_, rgb_orig_));
-  std::vector<std::vector<float> > rgb(3, std::vector<float>(width_ * height_));
-  img.ToLinearRGB(&rgb);
-  const std::vector<ImageF> rgb_planes = PlanesFromPacked(width_, height_, rgb);
-  std::vector<float>(width_ * height_).swap(distmap_);
-  ImageF distmap;
-  comparator_.Diffmap(rgb_planes, distmap);
-  CopyToPacked(distmap, &distmap_);
-  distance_ = ::butteraugli::ButteraugliScoreFromDiffmap(distmap);
+
+  const auto convert_start = std::chrono::steady_clock::now();
+  img.ToLinearRGB(&candidate_linear_rgb_);
+  CopyPackedToPlanes(width_, height_, candidate_linear_rgb_, &candidate_planes_);
+  const auto convert_end = std::chrono::steady_clock::now();
+
+  const auto diffmap_start = std::chrono::steady_clock::now();
+  comparator_.Diffmap(candidate_planes_, diffmap_image_);
+  if (distmap_.size() != static_cast<size_t>(width_ * height_)) {
+    distmap_.resize(width_ * height_);
+  }
+  CopyToPacked(diffmap_image_, &distmap_);
+  distance_ = ::butteraugli::ButteraugliScoreFromDiffmap(diffmap_image_);
+  const auto diffmap_end = std::chrono::steady_clock::now();
+
+  const double convert_ms = std::chrono::duration<double, std::milli>(
+      convert_end - convert_start).count();
+  const double diffmap_ms = std::chrono::duration<double, std::milli>(
+      diffmap_end - diffmap_start).count();
+  const double total_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - start).count();
+
   if (stats_ != nullptr) {
     ++stats_->butteraugli_compare_calls;
-    stats_->butteraugli_compare_total_ms +=
-        std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+    stats_->butteraugli_compare_total_ms += total_ms;
   }
   GUETZLI_LOG(stats_, " BA[100.00%%] D[%6.4f]", distance_);
+  if (stats_ != nullptr && stats_->debug_output_file != nullptr) {
+    GUETZLI_LOG(stats_,
+                " CompareTiming total_ms=%.3f convert_ms=%.3f diffmap_ms=%.3f ref_precompute_ms=%.3f ref_cached=%d\n",
+                total_ms, convert_ms, diffmap_ms,
+                reference_precompute_ms_, reference_precomputed_ ? 1 : 0);
+  }
 }
 
 namespace {
