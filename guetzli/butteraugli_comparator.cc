@@ -17,6 +17,7 @@
 #include "guetzli/butteraugli_comparator.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "guetzli/debug_print.h"
 #include "guetzli/gamma_correct.h"
@@ -61,6 +62,7 @@ ButteraugliComparator::ButteraugliComparator(const int width, const int height,
       stats_(stats) {}
 
 void ButteraugliComparator::Compare(const OutputImage& img) {
+  const auto start = std::chrono::steady_clock::now();
   std::vector<ImageF> rgb0 =
       ::butteraugli::OpsinDynamicsImage(LinearRgb(width_, height_, rgb_orig_));
   std::vector<std::vector<float> > rgb(3, std::vector<float>(width_ * height_));
@@ -71,6 +73,12 @@ void ButteraugliComparator::Compare(const OutputImage& img) {
   comparator_.Diffmap(rgb_planes, distmap);
   CopyToPacked(distmap, &distmap_);
   distance_ = ::butteraugli::ButteraugliScoreFromDiffmap(distmap);
+  if (stats_ != nullptr) {
+    ++stats_->butteraugli_compare_calls;
+    stats_->butteraugli_compare_total_ms +=
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+  }
   GUETZLI_LOG(stats_, " BA[100.00%%] D[%6.4f]", distance_);
 }
 

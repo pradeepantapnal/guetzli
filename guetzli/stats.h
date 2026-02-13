@@ -18,6 +18,7 @@
 #define GUETZLI_STATS_H_
 
 #include <cstdio>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <utility>
@@ -35,6 +36,11 @@ struct ProcessStats {
   std::map<std::string, int> counters;
   std::string* debug_output = nullptr;
   FILE* debug_output_file = nullptr;
+
+  uint64_t butteraugli_compare_calls = 0;
+  double butteraugli_compare_total_ms = 0.0;
+  double select_frequency_masking_total_ms = 0.0;
+  uint64_t select_frequency_masking_candidate_evals = 0;
 
   std::string filename;
 };

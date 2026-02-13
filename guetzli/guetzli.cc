@@ -322,5 +322,21 @@ int main(int argc, char** argv) {
   }
 
   WriteFileOrDie(argv[opt_idx + 1], out_data);
+
+  if (verbose) {
+    const double compare_avg_ms = stats.butteraugli_compare_calls == 0
+        ? 0.0
+        : stats.butteraugli_compare_total_ms / stats.butteraugli_compare_calls;
+    fprintf(stderr,
+            "Instrumentation: Compare calls=%llu total_ms=%.3f avg_ms=%.3f\n",
+            static_cast<unsigned long long>(stats.butteraugli_compare_calls),
+            stats.butteraugli_compare_total_ms, compare_avg_ms);
+    fprintf(stderr,
+            "Instrumentation: SelectFrequencyMasking total_ms=%.3f candidate_evals=%llu\n",
+            stats.select_frequency_masking_total_ms,
+            static_cast<unsigned long long>(
+                stats.select_frequency_masking_candidate_evals));
+  }
+
   return 0;
 }
