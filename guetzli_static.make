@@ -10,6 +10,22 @@ endif
 
 .PHONY: clean prebuild prelink
 
+
+# Optional profile-guided optimization and LTO knobs:
+#   PROFILE=1    -> build with profile generation
+#   PROFILE=use  -> build with profile use
+#   LTO=1        -> build with link-time optimization
+EXTRA_OPT_FLAGS :=
+ifeq ($(PROFILE),1)
+  EXTRA_OPT_FLAGS += -fprofile-generate
+endif
+ifeq ($(PROFILE),use)
+  EXTRA_OPT_FLAGS += -fprofile-use -fprofile-correction
+endif
+ifeq ($(LTO),1)
+  EXTRA_OPT_FLAGS += -flto
+endif
+
 ifeq ($(config),release)
   RESCOMP = windres
   TARGETDIR = bin/Release
@@ -19,12 +35,12 @@ ifeq ($(config),release)
   INCLUDES += -I. -Ithird_party/butteraugli
   FORCE_INCLUDE +=
   ALL_CPPFLAGS += $(CPPFLAGS) -MMD -MP $(DEFINES) $(INCLUDES)
-  ALL_CFLAGS += $(CFLAGS) $(ALL_CPPFLAGS) -O3 -g `pkg-config --static --cflags libpng || libpng-config --static --cflags`
-  ALL_CXXFLAGS += $(CXXFLAGS) $(ALL_CPPFLAGS) -O3 -g -std=c++11 `pkg-config --static --cflags libpng || libpng-config --static --cflags`
+  ALL_CFLAGS += $(CFLAGS) $(ALL_CPPFLAGS) -O3 -g $(EXTRA_OPT_FLAGS) `pkg-config --static --cflags libpng || libpng-config --static --cflags`
+  ALL_CXXFLAGS += $(CXXFLAGS) $(ALL_CPPFLAGS) -O3 -g $(EXTRA_OPT_FLAGS) -std=c++11 `pkg-config --static --cflags libpng || libpng-config --static --cflags`
   ALL_RESFLAGS += $(RESFLAGS) $(DEFINES) $(INCLUDES)
   LIBS +=
   LDDEPS +=
-  ALL_LDFLAGS += $(LDFLAGS) `pkg-config --static --libs libpng || libpng-config --static --ldflags`
+  ALL_LDFLAGS += $(LDFLAGS) $(EXTRA_OPT_FLAGS) `pkg-config --static --libs libpng || libpng-config --static --ldflags`
   LINKCMD = $(AR) -rcs "$@" $(OBJECTS)
   define PREBUILDCMDS
   endef
@@ -47,11 +63,11 @@ ifeq ($(config),debug)
   FORCE_INCLUDE +=
   ALL_CPPFLAGS += $(CPPFLAGS) -MMD -MP $(DEFINES) $(INCLUDES)
   ALL_CFLAGS += $(CFLAGS) $(ALL_CPPFLAGS) -g `pkg-config --static --cflags libpng || libpng-config --static --cflags`
-  ALL_CXXFLAGS += $(CXXFLAGS) $(ALL_CPPFLAGS) -g -std=c++11 `pkg-config --static --cflags libpng || libpng-config --static --cflags`
+  ALL_CXXFLAGS += $(CXXFLAGS) $(ALL_CPPFLAGS) -g -std=c++11 $(EXTRA_OPT_FLAGS) `pkg-config --static --cflags libpng || libpng-config --static --cflags`
   ALL_RESFLAGS += $(RESFLAGS) $(DEFINES) $(INCLUDES)
   LIBS +=
   LDDEPS +=
-  ALL_LDFLAGS += $(LDFLAGS) `pkg-config --static --libs libpng || libpng-config --static --ldflags`
+  ALL_LDFLAGS += $(LDFLAGS) $(EXTRA_OPT_FLAGS) `pkg-config --static --libs libpng || libpng-config --static --ldflags`
   LINKCMD = $(AR) -rcs "$@" $(OBJECTS)
   define PREBUILDCMDS
   endef

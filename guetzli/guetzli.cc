@@ -352,15 +352,19 @@ int main(int argc, char** argv) {
         ? 0.0
         : stats.butteraugli_compare_total_ms / stats.butteraugli_compare_calls;
     fprintf(stderr,
-            "Instrumentation: Compare calls=%llu total_ms=%.3f avg_ms=%.3f color_ms=%.3f diffmap_ms=%.3f\n",
+            "Instrumentation: Compare calls=%llu tiled_calls=%llu total_ms=%.3f avg_ms=%.3f color_ms=%.3f diffmap_ms=%.3f tile_compare_ms=%.3f dirty_tiles=%llu tiles_recomputed=%llu\n",
             static_cast<unsigned long long>(stats.butteraugli_compare_calls),
+            static_cast<unsigned long long>(stats.butteraugli_tiled_compare_calls),
             stats.butteraugli_compare_total_ms, compare_avg_ms,
             stats.butteraugli_color_convert_total_ms,
-            stats.butteraugli_diffmap_total_ms);
+            stats.butteraugli_diffmap_total_ms,
+            stats.butteraugli_tile_compare_total_ms,
+            static_cast<unsigned long long>(stats.butteraugli_dirty_tiles),
+            static_cast<unsigned long long>(stats.butteraugli_tiles_recomputed));
     fprintf(stderr,
             "Instrumentation: SelectFrequencyMasking total_ms=%.3f "
             "candidate_evals=%llu proxy_evals=%llu full_compare_calls=%llu proxy_rejects=%llu top_k=%llu "
-            "fast_rejects=%llu\n",
+            "fast_rejects=%llu sort_ms=%.3f\n",
             stats.select_frequency_masking_total_ms,
             static_cast<unsigned long long>(
                 stats.select_frequency_masking_candidate_evals),
@@ -373,7 +377,8 @@ int main(int argc, char** argv) {
             static_cast<unsigned long long>(
                 stats.select_frequency_masking_top_k),
             static_cast<unsigned long long>(
-                stats.select_frequency_masking_fast_rejects));
+                stats.select_frequency_masking_fast_rejects),
+            stats.select_frequency_masking_sort_total_ms);
     fprintf(stderr,
             "Instrumentation: butteraugli::Convolution calls=%llu total_ms=%.3f threads=%d\n",
             static_cast<unsigned long long>(butter_profile.convolution_calls),

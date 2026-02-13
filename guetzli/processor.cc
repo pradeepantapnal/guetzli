@@ -618,6 +618,8 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
   std::vector<int> last_indexes(num_blocks);
 
   static const size_t kTopKCandidates = 20;
+  static const int kTileEdge = 64;
+  static const int kTileHaloPx = 16;
   struct Candidate {
     int block_ix;
     float val;
@@ -705,6 +707,11 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
 
       const size_t full_candidate_count = global_order.size();
       const size_t top_k = std::min(kTopKCandidates, full_candidate_count);
+      const bool profiling =
+          (stats_ != nullptr && stats_->debug_output_file != nullptr);
+      const auto sort_start = profiling
+          ? std::chrono::steady_clock::now()
+          : std::chrono::steady_clock::time_point();
       if (full_candidate_count > top_k) {
         std::nth_element(global_order.begin(),
                          global_order.begin() + top_k,
@@ -716,6 +723,11 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
         stats_->select_frequency_masking_top_k += top_k;
         stats_->select_frequency_masking_fast_rejects +=
             full_candidate_count - top_k;
+        if (profiling) {
+          stats_->select_frequency_masking_sort_total_ms +=
+              std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - sort_start).count();
+        }
       }
 
       double rel_size_delta = direction > 0 ? 0.01 : 0.0005;
@@ -816,6 +828,32 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
       if (stats_ != nullptr) {
         ++stats_->select_frequency_masking_proxy_evals;
       }
+      if (stats_ != nullptr) {
+        const int tiles_x = (width + kTileEdge - 1) / kTileEdge;
+        const int tiles_y = (height + kTileEdge - 1) / kTileEdge;
+        std::vector<uint8_t> dirty_tiles(tiles_x * tiles_y, 0);
+        for (int block_ix : changed_blocks) {
+          const int block_x = block_ix % block_width;
+          const int block_y = block_ix / block_width;
+          const int px0 = std::max(0, block_x * 8 * factor_x - kTileHaloPx);
+          const int py0 = std::max(0, block_y * 8 * factor_y - kTileHaloPx);
+          const int px1 = std::min(width, (block_x + 1) * 8 * factor_x + kTileHaloPx);
+          const int py1 = std::min(height, (block_y + 1) * 8 * factor_y + kTileHaloPx);
+          const int tx0 = px0 / kTileEdge;
+          const int ty0 = py0 / kTileEdge;
+          const int tx1 = (px1 - 1) / kTileEdge;
+          const int ty1 = (py1 - 1) / kTileEdge;
+          for (int ty = ty0; ty <= ty1; ++ty) {
+            for (int tx = tx0; tx <= tx1; ++tx) {
+              dirty_tiles[ty * tiles_x + tx] = 1;
+            }
+          }
+        }
+        uint64_t dirty_count = 0;
+        for (uint8_t v : dirty_tiles) dirty_count += v;
+        stats_->butteraugli_dirty_tiles += dirty_count;
+        stats_->butteraugli_tiles_recomputed += dirty_count;
+      }
       const double proxy_distance = comparator_->ProxyDistance(*img);
       const double threshold = params_.butteraugli_target * target_mul;
       const double best_distance = comparator_->distmap_aggregate();
@@ -827,10 +865,21 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
         }
         continue;
       }
+      const bool compare_profiling =
+          (stats_ != nullptr && stats_->debug_output_file != nullptr);
+      const auto compare_start = compare_profiling
+          ? std::chrono::steady_clock::now()
+          : std::chrono::steady_clock::time_point();
       if (stats_ != nullptr) {
         ++stats_->select_frequency_masking_full_compare_calls;
+        ++stats_->butteraugli_tiled_compare_calls;
       }
       comparator_->Compare(*img);
+      if (stats_ != nullptr && compare_profiling) {
+        stats_->butteraugli_tile_compare_total_ms +=
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - compare_start).count();
+      }
       MaybeOutput(encoded_jpg);
       prev_size = est_jpg_size;
     }
