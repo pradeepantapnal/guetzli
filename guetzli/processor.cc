@@ -17,6 +17,7 @@
 #include "guetzli/processor.h"
 
 #include <algorithm>
+#include <chrono>
 #include <set>
 #include <string.h>
 #include <vector>
@@ -540,6 +541,7 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
                                        const uint8_t comp_mask,
                                        const double target_mul,
                                        bool stop_early) {
+  const auto select_freq_start = std::chrono::steady_clock::now();
   const int width = img->width();
   const int height = img->height();
   const int ncomp = jpg.components.size();
@@ -649,6 +651,9 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
                 float val = ((candidate_errors[i] - max_err) /
                              block_weight[block_ix]);
                 global_order.push_back(std::make_pair(block_ix, val));
+                if (stats_ != nullptr) {
+                  ++stats_->select_frequency_masking_candidate_evals;
+                }
               }
               blocks_to_change += (last_index < num_candidates ? 1 : 0);
             } else {
@@ -656,6 +661,9 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
                 float val = ((max_err - candidate_errors[i]) /
                              block_weight[block_ix]);
                 global_order.push_back(std::make_pair(block_ix, val));
+                if (stats_ != nullptr) {
+                  ++stats_->select_frequency_masking_candidate_evals;
+                }
               }
               blocks_to_change += (last_index > 0 ? 1 : 0);
             }
@@ -776,6 +784,11 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
       MaybeOutput(encoded_jpg);
       prev_size = est_jpg_size;
     }
+  }
+  if (stats_ != nullptr) {
+    stats_->select_frequency_masking_total_ms +=
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - select_freq_start).count();
   }
 }
 
