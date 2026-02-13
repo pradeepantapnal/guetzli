@@ -104,6 +104,17 @@ double ButteraugliFuzzyInverse(double seek);
 bool ButteraugliAdaptiveQuantization(size_t xsize, size_t ysize,
     const std::vector<std::vector<float> > &rgb, std::vector<float> &quant);
 
+void SetThreadCount(int threads);
+int ThreadCount();
+
+struct RuntimeProfile {
+  uint64_t convolution_calls;
+  double convolution_ms;
+};
+
+void ResetRuntimeProfile();
+RuntimeProfile GetRuntimeProfile();
+
 // Implementation details, don't use anything below or your code will
 // break in the future.
 

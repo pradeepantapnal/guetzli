@@ -39,6 +39,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <functional>
+#include <mutex>
+#include <thread>
 
 
 // Restricted pointers speed up Convolution(); MSVC uses a different keyword.
@@ -56,6 +62,152 @@
 #endif
 
 namespace butteraugli {
+namespace {
+
+std::atomic<int> g_thread_count(0);
+std::atomic<uint64_t> g_convolution_calls(0);
+std::atomic<double> g_convolution_ms(0.0);
+
+inline void AtomicAddDouble(std::atomic<double>* dst, const double value) {
+  double old = dst->load(std::memory_order_relaxed);
+  while (!dst->compare_exchange_weak(old, old + value,
+                                     std::memory_order_relaxed,
+                                     std::memory_order_relaxed)) {
+  }
+}
+
+int EffectiveThreadCount() {
+  int threads = g_thread_count.load(std::memory_order_relaxed);
+  if (threads > 0) return threads;
+  const unsigned hc = std::thread::hardware_concurrency();
+  return hc == 0 ? 1 : static_cast<int>(hc);
+}
+
+class ThreadPool {
+ public:
+  ThreadPool() = default;
+  ~ThreadPool() { Shutdown(); }
+
+  void Run(const size_t begin, const size_t end,
+           const std::function<void(size_t)>& fn) {
+    const size_t count = end - begin;
+    int threads = std::max(1, std::min<int>(EffectiveThreadCount(), count));
+    if (threads <= 1 || count < 128) {
+      for (size_t i = begin; i < end; ++i) fn(i);
+      return;
+    }
+    EnsureWorkers(threads - 1);
+
+    std::unique_lock<std::mutex> lock(mu_);
+    begin_ = begin;
+    end_ = end;
+    fn_ = fn;
+    chunk_size_ = (count + threads - 1) / threads;
+    next_ = begin_ + chunk_size_;
+    active_workers_ = workers_.size();
+    generation_++;
+    cv_work_.notify_all();
+    lock.unlock();
+
+    for (size_t i = begin; i < std::min(end, begin + chunk_size_); ++i) {
+      fn(i);
+    }
+
+    lock.lock();
+    cv_done_.wait(lock, [&] { return active_workers_ == 0; });
+  }
+
+ private:
+  void EnsureWorkers(const size_t count) {
+    while (workers_.size() < count) {
+      workers_.emplace_back([this]() { WorkerLoop(); });
+    }
+  }
+
+  void WorkerLoop() {
+    size_t seen_generation = 0;
+    std::unique_lock<std::mutex> lock(mu_);
+    for (;;) {
+      cv_work_.wait(lock, [&] { return shutdown_ || generation_ > seen_generation; });
+      if (shutdown_) return;
+      seen_generation = generation_;
+      for (;;) {
+        const size_t start = next_;
+        if (start >= end_) break;
+        const size_t local_chunk = chunk_size_;
+        next_ = std::min(end_, start + local_chunk);
+        const auto fn = fn_;
+        lock.unlock();
+        for (size_t i = start; i < std::min(end_, start + local_chunk); ++i) {
+          fn(i);
+        }
+        lock.lock();
+      }
+      if (--active_workers_ == 0) cv_done_.notify_one();
+    }
+  }
+
+  void Shutdown() {
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      shutdown_ = true;
+      cv_work_.notify_all();
+    }
+    for (auto& worker : workers_) {
+      if (worker.joinable()) worker.join();
+    }
+  }
+
+  std::mutex mu_;
+  std::condition_variable cv_work_;
+  std::condition_variable cv_done_;
+  bool shutdown_ = false;
+  size_t generation_ = 0;
+  size_t begin_ = 0;
+  size_t end_ = 0;
+  size_t next_ = 0;
+  size_t chunk_size_ = 1;
+  size_t active_workers_ = 0;
+  std::function<void(size_t)> fn_;
+  std::vector<std::thread> workers_;
+};
+
+ThreadPool& GetThreadPool() {
+  static ThreadPool* pool = new ThreadPool();
+  return *pool;
+}
+
+template <typename Func>
+void ParallelFor(size_t begin, size_t end, Func fn) {
+  if (end <= begin) return;
+  GetThreadPool().Run(begin, end, std::function<void(size_t)>(fn));
+}
+
+
+}  // namespace
+
+
+void SetThreadCount(int threads) {
+  if (threads < 1) threads = 1;
+  if (threads > 64) threads = 64;
+  g_thread_count.store(threads, std::memory_order_relaxed);
+}
+
+int ThreadCount() {
+  return EffectiveThreadCount();
+}
+
+void ResetRuntimeProfile() {
+  g_convolution_calls.store(0, std::memory_order_relaxed);
+  g_convolution_ms.store(0.0, std::memory_order_relaxed);
+}
+
+RuntimeProfile GetRuntimeProfile() {
+  RuntimeProfile profile;
+  profile.convolution_calls = g_convolution_calls.load(std::memory_order_relaxed);
+  profile.convolution_ms = g_convolution_ms.load(std::memory_order_relaxed);
+  return profile;
+}
 
 void *CacheAligned::Allocate(const size_t bytes) {
   char *const allocated = static_cast<char *>(malloc(bytes + kCacheLineSize));
@@ -198,29 +350,35 @@ ImageF Convolution(const ImageF& in,
   for (int i = 0; i < scaled_kernel.size(); ++i) {
     scaled_kernel[i] *= scale_no_border;
   }
+  const auto conv_start = std::chrono::steady_clock::now();
   // left border
-  for (int x = 0; x < border1; ++x) {
+  ParallelFor(0, static_cast<size_t>(border1), [&](size_t x) {
     ConvolveBorderColumn(in, kernel, weight_no_border, border_ratio, x,
                          out.Row(x));
-  }
+  });
   // middle
-  for (size_t y = 0; y < in.ysize(); ++y) {
-    const float* const BUTTERAUGLI_RESTRICT row_in = in.Row(y);
-    for (int x = border1; x < border2; ++x) {
-      const int d = x - offset;
-      float* const BUTTERAUGLI_RESTRICT row_out = out.Row(x);
+  ParallelFor(static_cast<size_t>(border1), static_cast<size_t>(border2),
+              [&](size_t x) {
+    const int d = static_cast<int>(x) - offset;
+    float* const BUTTERAUGLI_RESTRICT row_out = out.Row(x);
+    for (size_t y = 0; y < in.ysize(); ++y) {
+      const float* const BUTTERAUGLI_RESTRICT row_in = in.Row(y);
       float sum = 0.0f;
       for (int j = 0; j < len; ++j) {
         sum += row_in[d + j] * scaled_kernel[j];
       }
       row_out[y] = sum;
     }
-  }
+  });
   // right border
-  for (int x = border2; x < in.xsize(); ++x) {
+  ParallelFor(static_cast<size_t>(border2), in.xsize(), [&](size_t x) {
     ConvolveBorderColumn(in, kernel, weight_no_border, border_ratio, x,
                          out.Row(x));
-  }
+  });
+  const double conv_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - conv_start).count();
+  g_convolution_calls.fetch_add(1, std::memory_order_relaxed);
+  AtomicAddDouble(&g_convolution_ms, conv_ms);
   return out;
 }
 

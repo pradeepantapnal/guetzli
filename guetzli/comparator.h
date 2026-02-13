@@ -35,6 +35,7 @@ class Comparator {
   // inside the object. The provided image must have the same dimensions as the
   // baseline image.
   virtual void Compare(const OutputImage& img) = 0;
+  virtual double ProxyDistance(const OutputImage& img) const = 0;
 
   // Must be called before any CompareBlock() calls can be called.
   virtual void StartBlockComparisons() = 0;

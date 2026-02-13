@@ -39,11 +39,18 @@ struct ProcessStats {
 
   uint64_t butteraugli_compare_calls = 0;
   double butteraugli_compare_total_ms = 0.0;
+  double butteraugli_color_convert_total_ms = 0.0;
+  double butteraugli_diffmap_total_ms = 0.0;
   double select_frequency_masking_total_ms = 0.0;
   uint64_t select_frequency_masking_candidate_evals = 0;
+  uint64_t select_frequency_masking_proxy_evals = 0;
   uint64_t select_frequency_masking_full_compare_calls = 0;
+  uint64_t select_frequency_masking_proxy_rejects = 0;
   uint64_t select_frequency_masking_top_k = 0;
   uint64_t select_frequency_masking_fast_rejects = 0;
+  uint64_t jpeg_encode_calls = 0;
+  double jpeg_encode_total_ms = 0.0;
+  int thread_count = 1;
 
   std::string filename;
 };

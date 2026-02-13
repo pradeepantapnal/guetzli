@@ -130,10 +130,17 @@ int GuetzliStringOut(void* data, const uint8_t* buf, size_t count) {
 
 void Processor::OutputJpeg(const JPEGData& jpg,
                            std::string* out) {
+  const bool profiling = (stats_ != nullptr && stats_->debug_output_file != nullptr);
+  const auto start = profiling ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
   out->clear();
   JPEGOutput output(GuetzliStringOut, out);
   if (!WriteJpeg(jpg, params_.clear_metadata, output)) {
     assert(0);
+  }
+  if (profiling) {
+    ++stats_->jpeg_encode_calls;
+    stats_->jpeg_encode_total_ms += std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
   }
 }
 
@@ -541,7 +548,8 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
                                        const uint8_t comp_mask,
                                        const double target_mul,
                                        bool stop_early) {
-  const auto select_freq_start = std::chrono::steady_clock::now();
+  const bool profiling = (stats_ != nullptr && stats_->debug_output_file != nullptr);
+  const auto select_freq_start = profiling ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
   const int width = img->width();
   const int height = img->height();
   const int ncomp = jpg.components.size();
@@ -806,6 +814,20 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
                   encoded_jpg.size(),
                   100.0 - (100.0 * est_jpg_size) / encoded_jpg.size());
       if (stats_ != nullptr) {
+        ++stats_->select_frequency_masking_proxy_evals;
+      }
+      const double proxy_distance = comparator_->ProxyDistance(*img);
+      const double threshold = params_.butteraugli_target * target_mul;
+      const double best_distance = comparator_->distmap_aggregate();
+      constexpr double kProxyEpsilon = 0.10;
+      if (proxy_distance > threshold + kProxyEpsilon &&
+          proxy_distance > best_distance + kProxyEpsilon) {
+        if (stats_ != nullptr) {
+          ++stats_->select_frequency_masking_proxy_rejects;
+        }
+        continue;
+      }
+      if (stats_ != nullptr) {
         ++stats_->select_frequency_masking_full_compare_calls;
       }
       comparator_->Compare(*img);
@@ -813,7 +835,7 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
       prev_size = est_jpg_size;
     }
   }
-  if (stats_ != nullptr) {
+  if (profiling) {
     stats_->select_frequency_masking_total_ms +=
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - select_freq_start).count();
