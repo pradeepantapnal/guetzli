@@ -72,6 +72,12 @@ class ButteraugliComparator : public Comparator {
   int factor_x_;
   int factor_y_;
   std::vector<::butteraugli::ImageF> mask_xyz_;
+  std::vector<::butteraugli::ImageF> reference_opsin_;
+  std::vector<::butteraugli::ImageF> candidate_planes_;
+  ::butteraugli::ImageF diffmap_image_;
+  std::vector<std::vector<float>> candidate_linear_rgb_;
+  bool reference_precomputed_ = false;
+  double reference_precompute_ms_ = 0.0;
   std::vector<std::vector<std::vector<float>>> per_block_pregamma_;
   ::butteraugli::ButteraugliComparator comparator_;
   float distance_;
