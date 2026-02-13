@@ -41,6 +41,9 @@ struct ProcessStats {
   double butteraugli_compare_total_ms = 0.0;
   double select_frequency_masking_total_ms = 0.0;
   uint64_t select_frequency_masking_candidate_evals = 0;
+  uint64_t select_frequency_masking_full_compare_calls = 0;
+  uint64_t select_frequency_masking_top_k = 0;
+  uint64_t select_frequency_masking_fast_rejects = 0;
 
   std::string filename;
 };

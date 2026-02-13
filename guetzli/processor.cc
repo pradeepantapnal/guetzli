@@ -609,6 +609,17 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
   std::vector<float> max_block_error(num_blocks);
   std::vector<int> last_indexes(num_blocks);
 
+  static const size_t kTopKCandidates = 20;
+  struct Candidate {
+    int block_ix;
+    float val;
+    uint64_t id;
+  };
+  auto CandidateLess = [](const Candidate& a, const Candidate& b) {
+    if (a.val != b.val) return a.val < b.val;
+    return a.id < b.id;
+  };
+
   bool first_up_iter = true;
   for (int direction : {1, -1}) {
     for (;;) {
@@ -621,7 +632,7 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
           break;
         }
       }
-      std::vector<std::pair<int, float> > global_order;
+      std::vector<Candidate> global_order;
       int blocks_to_change;
       std::vector<float> block_weight;
       for (int rblock = 1; rblock <= 4; ++rblock) {
@@ -650,7 +661,9 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
               for (size_t i = last_index; i < num_candidates; ++i) {
                 float val = ((candidate_errors[i] - max_err) /
                              block_weight[block_ix]);
-                global_order.push_back(std::make_pair(block_ix, val));
+                global_order.push_back({block_ix, val,
+                    (static_cast<uint64_t>(block_ix) << 32) |
+                    static_cast<uint32_t>(i)});
                 if (stats_ != nullptr) {
                   ++stats_->select_frequency_masking_candidate_evals;
                 }
@@ -660,7 +673,9 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
               for (int i = last_index - 1; i >= 0; --i) {
                 float val = ((max_err - candidate_errors[i]) /
                              block_weight[block_ix]);
-                global_order.push_back(std::make_pair(block_ix, val));
+                global_order.push_back({block_ix, val,
+                    (static_cast<uint64_t>(block_ix) << 32) |
+                    static_cast<uint32_t>(i)});
                 if (stats_ != nullptr) {
                   ++stats_->select_frequency_masking_candidate_evals;
                 }
@@ -680,10 +695,20 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
         break;
       }
 
-      std::sort(global_order.begin(), global_order.end(),
-                [](const std::pair<int, float>& a,
-                   const std::pair<int, float>& b) {
-                  return a.second < b.second; });
+      const size_t full_candidate_count = global_order.size();
+      const size_t top_k = std::min(kTopKCandidates, full_candidate_count);
+      if (full_candidate_count > top_k) {
+        std::nth_element(global_order.begin(),
+                         global_order.begin() + top_k,
+                         global_order.end(), CandidateLess);
+        global_order.resize(top_k);
+      }
+      std::sort(global_order.begin(), global_order.end(), CandidateLess);
+      if (stats_ != nullptr) {
+        stats_->select_frequency_masking_top_k += top_k;
+        stats_->select_frequency_masking_fast_rejects +=
+            full_candidate_count - top_k;
+      }
 
       double rel_size_delta = direction > 0 ? 0.01 : 0.0005;
       if (direction > 0 && comparator_->DistanceOK(1.0)) {
@@ -698,8 +723,8 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
       if (first_up_iter) {
         const float limit = 0.75f * comparator_->BlockErrorLimit();
         auto it = std::partition_point(global_order.begin(), global_order.end(),
-                                       [=](const std::pair<int, float>& a) {
-                                         return a.second < limit; });
+                                       [=](const Candidate& a) {
+                                         return a.val < limit; });
         min_coeffs_to_change = std::max<int>(min_coeffs_to_change,
                                              it - global_order.begin());
         first_up_iter = false;
@@ -710,7 +735,7 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
       int changed_coeffs = 0;
       int est_jpg_size = prev_size;
       for (size_t i = 0; i < global_order.size(); ++i) {
-        const int block_ix = global_order[i].first;
+        const int block_ix = global_order[i].block_ix;
         const int block_x = block_ix % block_width;
         const int block_y = block_ix / block_width;
         const int last_idx = last_indexes[block_ix];
@@ -743,7 +768,7 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
         img->component(c).SetCoeffBlock(block_x, block_y, block);
         last_indexes[block_ix] += direction;
         changed_blocks.insert(block_ix);
-        val_threshold = global_order[i].second;
+        val_threshold = global_order[i].val;
         ++changed_coeffs;
         static const int kEntropyCodeUpdateFreq = 10;
         if (i % kEntropyCodeUpdateFreq == 0) {
@@ -757,7 +782,7 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
         }
       }
       size_t global_order_size = global_order.size();
-      std::vector<std::pair<int, float>>().swap(global_order);
+      std::vector<Candidate>().swap(global_order);
 
       for (int i = 0; i < num_blocks; ++i) {
         max_block_error[i] += block_weight[i] * val_threshold * direction;
@@ -780,6 +805,9 @@ void Processor::SelectFrequencyMasking(const JPEGData& jpg, OutputImage* img,
                   blocks_to_change, num_blocks, val_threshold,
                   encoded_jpg.size(),
                   100.0 - (100.0 * est_jpg_size) / encoded_jpg.size());
+      if (stats_ != nullptr) {
+        ++stats_->select_frequency_masking_full_compare_calls;
+      }
       comparator_->Compare(*img);
       MaybeOutput(encoded_jpg);
       prev_size = est_jpg_size;
